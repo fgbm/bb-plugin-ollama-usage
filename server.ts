@@ -239,6 +239,25 @@ function formatReport(rows: readonly CliRow[], range: Range): string {
   return rows.flatMap((row) => formatHostBlock(row, range)).join("\n");
 }
 
+/** ACP provider that runs the ollama-cloud models. The usage row is only
+ * meaningful when that provider is part of this bb. */
+const ACP_PROVIDER_ID = "acp-opencode";
+
+async function acpProviderReady(bb: BbPluginApi): Promise<boolean> {
+  try {
+    const catalog = await bb.sdk.providers.catalog();
+    const entry = catalog.find((candidate) => candidate.id === ACP_PROVIDER_ID);
+    return (
+      entry !== undefined &&
+      entry.enabled &&
+      entry.pluginEnabled &&
+      entry.available
+    );
+  } catch {
+    return false;
+  }
+}
+
 export default async function plugin(bb: BbPluginApi) {
   const hostClient = bb.hosts.experimental_client({ contract: hostContract });
 
@@ -319,6 +338,7 @@ export default async function plugin(bb: BbPluginApi) {
     usageRpc,
     {
       "provider-usage.v1.listResources": async () => {
+        if (!(await acpProviderReady(bb))) return { resources: [] };
         const hosts = await connectedHosts();
         return {
           resources: hosts.map((host) => ({
