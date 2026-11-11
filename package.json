@@ -1,0 +1,34 @@
+{
+  "name": "bb-plugin-ollama-usage",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fgbm/bb-plugin-ollama-usage.git"
+  },
+  "homepage": "https://github.com/fgbm/bb-plugin-ollama-usage",
+  "keywords": ["bb-plugin", "bb", "ollama", "ollama-cloud", "usage", "credits", "limits"],
+  "engines": {
+    "bb": ">=0.49",
+    "bbPluginSdk": ">=0.6.132"
+  },
+  "bb": {
+    "name": "Ollama Usage",
+    "description": "Shows the Ollama Cloud credit pool, its reset date and recent spend in BB's Provider usage view.",
+    "branding": {
+      "icon": "ChartColumn"
+    },
+    "server": "./server.ts",
+    "host": "./host.ts",
+    "skills": ["skills"]
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.132",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
