@@ -16,11 +16,12 @@ import {
   type Range,
 } from "./contract.js";
 
-/** Provider id used for grouping in the usage view. It matches the route
- * provider id the OpenCode catalog uses for these models, so the entry lands
- * next to them; the built-in view falls back to the provider id as the visible
- * name when the provider itself does not advertise usage support. */
-const PROVIDER_ID = "ollama-cloud";
+/** Provider id used for grouping in the usage view. The built-in view falls
+ * back to the provider id as the visible name when the provider itself does not
+ * advertise usage support, so this string is what the user reads. It must not
+ * be the catalog's route provider id ("ollama-cloud"): that is not a bb
+ * provider, and the view would render the raw id. */
+const PROVIDER_ID = "Ollama Cloud";
 const PROVIDER_LABEL = "Ollama Cloud";
 /** Resource ids are namespaced and versioned so a changed payload shape gets a
  * fresh cache entry instead of a stale one. */
