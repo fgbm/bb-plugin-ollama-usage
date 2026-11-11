@@ -125,6 +125,120 @@ function notMeasured(status: "unauthenticated" | "expired"): Usage {
   return { status, plan: null, accountEmail: null, planLabel: null };
 }
 
+type UsageWindow = z.infer<typeof usageWindowSchema>;
+
+/** One host's answer, as the CLI prints it and as --json emits it. */
+interface CliRow {
+  host: string;
+  hostId: string;
+  observedAt: number | null;
+  usage: Usage;
+  raw: HostUsageResult | null;
+}
+
+interface CliOptions {
+  json: boolean;
+  only: string | undefined;
+  range: Range;
+}
+
+type CliArgs = { ok: true; options: CliOptions } | { ok: false; message: string };
+
+function readFlagValue(argv: readonly string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  return index >= 0 ? argv[index + 1] : undefined;
+}
+
+function parseCliArgs(argv: readonly string[]): CliArgs {
+  const requested = readFlagValue(argv, "--range") ?? DEFAULT_RANGE;
+  const parsed = rangeSchema.safeParse(requested);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: `Unknown --range "${requested}": use 24h, 7d or 30d.`,
+    };
+  }
+  return {
+    ok: true,
+    options: {
+      json: argv.includes("--json"),
+      only: readFlagValue(argv, "--host"),
+      range: parsed.data,
+    },
+  };
+}
+
+function formatHeader(row: CliRow): string {
+  const plan =
+    row.usage.status === "ok" && row.usage.planLabel !== null
+      ? ` [${row.usage.planLabel}]`
+      : "";
+  return `${row.host} (${row.hostId})${plan}`;
+}
+
+function formatStatus(usage: Usage): string {
+  const detail = usage.status === "error" ? ` — ${usage.message}` : "";
+  return `  ${usage.status}${detail}`;
+}
+
+function formatWindow(window: UsageWindow): string {
+  const reset =
+    window.resetsAt === null ? "no reset reported" : `resets ${window.resetsAt}`;
+  const money =
+    window.cost === null
+      ? ""
+      : ` — ${formatUsd(window.cost.usedUsdCents)} of ${formatUsd(window.cost.limitUsdCents)}`;
+  return `  ${window.label}: ${String(window.usedPercent)}% used${money}, ${reset}`;
+}
+
+function formatCredits(raw: HostUsageResult | null): string | null {
+  if (raw?.purchasedBalanceCents == null) return null;
+  return `  Purchased credits left: ${formatUsd(raw.purchasedBalanceCents)}`;
+}
+
+function formatSpend(range: Range, raw: HostUsageResult | null): string | null {
+  if (raw?.rangeSpendCents == null) return null;
+  const requests =
+    raw.rangeRequests === null
+      ? ""
+      : ` over ${raw.rangeRequests.toLocaleString("en-US")} requests`;
+  return `  Last ${range}: ${formatUsd(raw.rangeSpendCents)}${requests}`;
+}
+
+function formatModels(raw: HostUsageResult | null): string[] {
+  return (raw?.topModels ?? []).map(
+    (model) =>
+      `    ${model.model} — ${formatUsd(model.spendUsdCents)}, ${model.requests.toLocaleString("en-US")} requests`,
+  );
+}
+
+function formatKeySource(raw: HostUsageResult | null): string | null {
+  return raw?.keySource == null ? null : `  key: ${raw.keySource}`;
+}
+
+/** Header plus either the status line or the measured body, in print order. */
+function formatHostBlock(row: CliRow, range: Range): string[] {
+  if (row.usage.status !== "ok") {
+    return [formatHeader(row), formatStatus(row.usage)];
+  }
+  const lines = [formatHeader(row), ...row.usage.windows.map(formatWindow)];
+  const optional = [
+    formatCredits(row.raw),
+    formatSpend(range, row.raw),
+    ...formatModels(row.raw),
+    formatKeySource(row.raw),
+  ];
+  for (const line of optional) {
+    if (line !== null) lines.push(line);
+  }
+  return lines;
+}
+
+function formatReport(rows: readonly CliRow[], range: Range): string {
+  if (rows.length === 0) return "No connected hosts.";
+  return rows.flatMap((row) => formatHostBlock(row, range)).join("\n");
+}
+
 export default async function plugin(bb: BbPluginApi) {
   const hostClient = bb.hosts.experimental_client({ contract: hostContract });
 
@@ -236,6 +350,21 @@ export default async function plugin(bb: BbPluginApi) {
     },
   );
 
+  async function collectRows(
+    only: string | undefined,
+    range: Range,
+  ): Promise<CliRow[]> {
+    const hosts = await connectedHosts();
+    const targets =
+      only === undefined ? hosts : hosts.filter((host) => host.id === only);
+    const rows: CliRow[] = [];
+    for (const host of targets) {
+      const { observedAt, usage, raw } = await collectForHost(host.id, true, range);
+      rows.push({ host: host.name, hostId: host.id, observedAt, usage, raw });
+    }
+    return rows;
+  }
+
   // `bb ollama-usage` prints the same numbers from a terminal.
   bb.cli.register({
     name: "ollama-usage",
@@ -248,79 +377,16 @@ export default async function plugin(bb: BbPluginApi) {
       },
     ],
     async run(argv) {
-      const json = argv.includes("--json");
-      const hostIndex = argv.indexOf("--host");
-      const only = hostIndex >= 0 ? argv[hostIndex + 1] : undefined;
-      const rangeIndex = argv.indexOf("--range");
-      const requested = rangeIndex >= 0 ? argv[rangeIndex + 1] : undefined;
-      const parsedRange = rangeSchema.safeParse(requested ?? DEFAULT_RANGE);
-      if (!parsedRange.success) {
-        return {
-          exitCode: 2,
-          stderr: `Unknown --range "${String(requested)}": use 24h, 7d or 30d.`,
-        };
+      const args = parseCliArgs(argv);
+      if (!args.ok) {
+        return { exitCode: 2, stderr: args.message };
       }
-      const range = parsedRange.data;
-
-      const hosts = await connectedHosts();
-      const targets =
-        only === undefined ? hosts : hosts.filter((host) => host.id === only);
-      const rows = [];
-      for (const host of targets) {
-        const { observedAt, usage, raw } = await collectForHost(host.id, true, range);
-        rows.push({ host: host.name, hostId: host.id, observedAt, usage, raw });
-      }
+      const { json, only, range } = args.options;
+      const rows = await collectRows(only, range);
       if (json) {
         return { exitCode: 0, stdout: JSON.stringify({ range, hosts: rows }, null, 2) };
       }
-      if (rows.length === 0) {
-        return { exitCode: 0, stdout: "No connected hosts." };
-      }
-
-      const lines: string[] = [];
-      for (const row of rows) {
-        const plan =
-          row.usage.status === "ok" && row.usage.planLabel !== null
-            ? ` [${row.usage.planLabel}]`
-            : "";
-        lines.push(`${row.host} (${row.hostId})${plan}`);
-        if (row.usage.status !== "ok") {
-          const detail =
-            row.usage.status === "error" ? ` — ${row.usage.message}` : "";
-          lines.push(`  ${row.usage.status}${detail}`);
-          continue;
-        }
-        for (const window of row.usage.windows) {
-          const reset =
-            window.resetsAt === null ? "no reset reported" : `resets ${window.resetsAt}`;
-          const money =
-            window.cost === null
-              ? ""
-              : ` — ${formatUsd(window.cost.usedUsdCents)} of ${formatUsd(window.cost.limitUsdCents)}`;
-          lines.push(
-            `  ${window.label}: ${String(window.usedPercent)}% used${money}, ${reset}`,
-          );
-        }
-        if (row.raw?.purchasedBalanceCents != null) {
-          lines.push(`  Purchased credits left: ${formatUsd(row.raw.purchasedBalanceCents)}`);
-        }
-        if (row.raw?.rangeSpendCents != null) {
-          const requests =
-            row.raw.rangeRequests === null
-              ? ""
-              : ` over ${row.raw.rangeRequests.toLocaleString("en-US")} requests`;
-          lines.push(`  Last ${range}: ${formatUsd(row.raw.rangeSpendCents)}${requests}`);
-        }
-        for (const model of row.raw?.topModels ?? []) {
-          lines.push(
-            `    ${model.model} — ${formatUsd(model.spendUsdCents)}, ${model.requests.toLocaleString("en-US")} requests`,
-          );
-        }
-        if (row.raw?.keySource != null) {
-          lines.push(`  key: ${row.raw.keySource}`);
-        }
-      }
-      return { exitCode: 0, stdout: lines.join("\n") };
+      return { exitCode: 0, stdout: formatReport(rows, range) };
     },
   });
 }
