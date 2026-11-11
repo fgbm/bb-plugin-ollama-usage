@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-ollama-usage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -8,7 +8,15 @@
     "url": "git+https://github.com/fgbm/bb-plugin-ollama-usage.git"
   },
   "homepage": "https://github.com/fgbm/bb-plugin-ollama-usage",
-  "keywords": ["bb-plugin", "bb", "ollama", "ollama-cloud", "usage", "credits", "limits"],
+  "keywords": [
+    "bb-plugin",
+    "bb",
+    "ollama",
+    "ollama-cloud",
+    "usage",
+    "credits",
+    "limits"
+  ],
   "engines": {
     "bb": ">=0.49",
     "bbPluginSdk": ">=0.6.132"
@@ -21,7 +29,9 @@
     },
     "server": "./server.ts",
     "host": "./host.ts",
-    "skills": ["skills"]
+    "skills": [
+      "skills"
+    ]
   },
   "dependencies": {
     "zod": "^4.6.5"
